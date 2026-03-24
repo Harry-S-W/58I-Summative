@@ -32,4 +32,3 @@ df1 <- df %>%
     `F2_time_0.2` = `F2-time_0.2`
   )
 
-print("Ayup")
