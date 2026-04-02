@@ -51,10 +51,26 @@ df <- df %>%
 # We now need to filter out any target transcript that is not the FACE (/eɪ/) vowel
 # luckily most target transcripts
 
-# First we are gonna remove any row which is not a valu (N/A) or a random symbol
+# First we are gonna remove any row which is not a value that is not a character(i.e. N/A)
+
+# this was quite tricky to do using the dplyr filter function so I Googled:
+# "filter all NA values out of a column using unique function R"
+# Utlized information form this source: "https://www.geeksforgeeks.org/r-language/how-to-remove-na-values-with-dplyr-filter/"
 
 df <- df %>%
-  filter(clean_target_transcript != NA) # not correct will fix
+  na.omit()
+
+# luckily there were no non-text values besides N/A 
+# we will now fillter by FACE words
+
+# We can make a filter which looks for common orthographic structures in FACE lexical set
+
+FACE <- "a.[e]$|ai|ay|eigh|ei|ey"
+
+df <- df[grepl(FACE, df$clean_target_transcript, ignore.case = TRUE), ] # gets rid of all words without the structure defined in the filter above
+
+df <- df[!grepl("are$|air", df$clean_target_transcript, ignore.case = TRUE), ]
+
 
 
 unique(df$clean_target_transcript)
