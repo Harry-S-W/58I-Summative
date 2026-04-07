@@ -145,21 +145,14 @@ summary(df$F1_normalized) # above -2.5 and below +2.5 SD because we filtered the
 summary(df$F2_normalized) # above -2.5 and below +2.5 SD because we filtered them out !!
 
 ggplot(df, aes(x = F2_normalized, y = F1_normalized, color = class)) +
-  # Add points with some transparency so you can see density
   geom_point(alpha = 0.4, size = 1) + 
-  
-  # Add ellipses to see where 95% of the data for each class falls
   stat_ellipse(level = 0.95, linewidth = 1) + 
-  
-  # REVERSE the axes to match the shape of the human mouth
   scale_x_reverse() + 
   scale_y_reverse() + 
-  
-  # Formatting to make it look professional
-  labs(
+    labs(
     title = "Normalized Vowel by Class",
-    x = "F2 (Backness <---> Frontness)",
-    y = "F1 (Height <---> Openness)",
+    x = "F2 (Standard Deviations)",
+    y = "F1 (Standard Deviations)",
     color = "Speaker Class"
   ) +
   theme_minimal() +
@@ -433,5 +426,39 @@ dist_val <- sqrt(
 
 print(dist_val)
 # distance is absolutely tiny (0.008685532) which shows quantititively that there
-# is really no discernable difference in F1/F2 values for the FACE vowel based
+# is really no discernible difference in F1/F2 values for the FACE vowel based
 # on class. 
+
+# Test 15
+# Because class seems to really have no affect at all, we will compare the youngest and oldest 
+# people in the data set and see how far apart they are
+
+age_low <- quantile(df$year_of_birth, 0.1, na.rm = TRUE)
+age_high <- quantile(df$year_of_birth, 0.9, na.rm = TRUE)
+
+age_stats <- df %>%
+  mutate(age_group = case_when(
+    year_of_birth <= age_low ~ "Oldest",
+    year_of_birth >= age_high ~ "Youngest"
+  )) %>%
+  filter(!is.na(age_group)) %>%
+  group_by(age_group) %>%
+  summarise(
+    mean_F1 = mean(F1_normalized, na.rm = TRUE),
+    mean_F2 = mean(F2_normalized, na.rm = TRUE)
+  )
+
+# fyi age_stats[1,] is oldest and age_stats[2,] is youngest
+dist_age <- sqrt(
+  (age_stats$mean_F1[1] - age_stats$mean_F1[2])^2 + 
+    (age_stats$mean_F2[1] - age_stats$mean_F2[2])^2
+)
+
+print(dist_age)
+
+# ~ 10x class 
+# Age has far more affect than class :)
+
+
+
+# END OF FILE :)
