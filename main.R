@@ -7,6 +7,7 @@ library(dplyr)
 library(tidyverse)
 library(ggplot2)
 library(lme4) # for fancy stats
+library(tidyr)
 
 # Ensure the file named "sociophonetics_FACE_data.xlsx" is in the same folder as this r script
 df <- readxl::read_excel("sociophonetics_FACE_data.xlsx") # Outputs dataframe called df
@@ -34,44 +35,63 @@ df <- df %>%
     `F2_time_0.2` = `F2-time_0.2`
   )
 
+# This filters out all the NA values besides the ones in before and after segment
+# 
+df <- df %>% 
+  drop_na(-c(segments_before, segments_after))
+
+df <- df %>% 
+  mutate(segments_before = replace_na(segments_before, "None"),
+         segments_after = replace_na(segments_after, "None"))
+
+# We can then drop the gender column as all the values are the same
+df$gender <- NULL
+
+# class column to Non-Professional and Professional
+# This for some reason I could not do so I googled "replace a value in R in a certain column based on value"
+# And used data from this source: https://www.geeksforgeeks.org/r-language/replace-values-based-on-condition-in-r/
+
+df$class[df$class == "N"] <- "Non-Professional"
+df$class[df$class == "P"] <- "Professional"
+
+# We are also going to make a column called age which will take the average of the years of birth, 
+# get the average, and and say who ever is born after that is "younger" and whoever is born before is "older"
+
+age_average <- mean(df$year_of_birth, na.rm = TRUE)
+round(age_average, digits = 0) # rounding to whole number
+
+# just like renaming N and P, we can check if an age is less than age_average or greater than
+# and put that in a new function using mutate
+
+df <- df %>% 
+  mutate(
+    age = ifelse(df$year_of_birth < age_average, "Older", "Younger")
+  )
+
+df <- df %>% 
+  relocate(age, .after = year_of_birth)
+
+
 # we want to take away all the values in column (target_transcript) which are not
 # pure characters (abcdefg...)
 
 df <- df %>%
-  mutate(clean_target_transcript = str_to_lower(target_transcript),# makes all words in target_transcript lower case
-         clean_target_transcript = str_remove_all(clean_target_transcript, "[[:punct:]><]"), # removes any punctuation
+  mutate(target_transcript = str_to_lower(target_transcript),# makes all words in target_transcript lower case
+         target_transcript = str_remove_all(target_transcript, "[[:punct:]><]"), # removes any punctuation
          # ^ it does turn "x-ray" into "xray" and "man-made" into "manmade" but we can adjust our search parameters. 
-         clean_target_transcript = str_trim(clean_target_transcript)) # removes white space before and after words
-
-# to move the new column next to the original target_transcript column, we use the relocate tool
-# I searched "How to relocate column in R" and utilized information from https://dplyr.tidyverse.org/reference/relocate.html
-
-df <- df %>%
-  relocate(clean_target_transcript, .after = target_transcript)
+         target_transcript = str_trim(target_transcript)) # removes white space before and after words
 
 
 # We now need to filter out any target transcript that is not the FACE (/eɪ/) vowel
 # luckily most target transcripts
 
-# First we are gonna remove any row which is not a value that is not a character(i.e. N/A)
-
-# this was quite tricky to do using the dplyr filter function so I Googled:
-# "filter all NA values out of a column using unique function R"
-# Utlized information form this source: "https://www.geeksforgeeks.org/r-language/how-to-remove-na-values-with-dplyr-filter/"
-
-df <- df %>%
-  na.omit()
-
-# luckily there were no non-text values besides N/A 
-# we will now fillter by FACE words
-
 # We can make a filter which looks for common orthographic structures in FACE lexical set
 
 FACE <- "a.[e]$|ai|ay|eigh|ei|ey"
 
-df <- df[grepl(FACE, df$clean_target_transcript, ignore.case = TRUE), ] # gets rid of all words without the structure defined in the filter above
+df <- df[grepl(FACE, df$target_transcript, ignore.case = TRUE), ] # gets rid of all words without the structure defined in the filter above
 
-df <- df[!grepl("are$|air", df$clean_target_transcript, ignore.case = TRUE), ]
+df <- df[!grepl("are$|air", df$target_transcript, ignore.case = TRUE), ]
 
 # Next steps to clean the data:
 # 1. z-score normalization. What we are focusing on is how class (and we can do age as well) changes the proruction
@@ -218,13 +238,13 @@ df <- df %>%
   mutate(
     voicing_after = case_when(
       segments_after %in% c("p", "t", "k", "f", "s", "S", "J", "h", "T") ~ "Voiceless",
-      segments_after %in% c("b", "d", "g", "v", "z", "_", "m", "n", "l", "r", "w", "i", "I", "@") ~ "Voiced",
+      segments_after %in% c("b", "d", "g", "v", "z", "_", "m", "n", "l", "r", "w", "i", "I", "@", "-") ~ "Voiced",
       TRUE ~ "Other"
     ),
     
     voicing_before = case_when(
       segments_before %in% c("p", "t", "k", "f", "s", "S", "J", "h", "T") ~ "Voiceless",
-      segments_before %in% c("b", "d", "g", "v", "z", "_", "m", "n", "l", "r", "w", "i", "I", "@") ~ "Voiced",
+      segments_before %in% c("b", "d", "g", "v", "z", "_", "m", "n", "l", "r", "w", "i", "I", "@", "-") ~ "Voiced",
       TRUE ~ "Other"
     )
   )
@@ -233,6 +253,14 @@ df <- df %>%
   relocate(voicing_after, .after = place_after)
 df <- df %>%
   relocate(voicing_before, .after = place_before)
+
+# we also make a seperate df for average speaker formant values 
+df_average_speaker_formants <- df %>%
+  group_by(speaker) %>%
+  summarize(F1_normalized = mean(F1_normalized), 
+            F2_normalized = mean(F2_normalized),
+            class = mean(class),
+            age = mean(age))
 
 # writing the new dataframe as a csv
 
@@ -267,122 +295,138 @@ ggplot(df, aes(x = F2_normalized, fill = class)) +
 
 # Test 1
 
-t.test(F1_normalized ~ class, data = df) # Not significant
-t.test(F2_normalized ~ class, data = df) # Not significant
+t.test(F1_normalized ~ class, data = df_average_speaker_formants) 
+t.test(F2_normalized ~ class, data = df_average_speaker_formants)
 
 # The above results were not significant (0.7309, and 0.9658 respectively)
 # However, to go beyond a standard analysis, below we are running tests to see if other variables affect formant
 # values. 
 
 # Test 2
+
+t.test(F1_normalized ~ age, data = df_average_speaker_formants) 
+t.test(F2_normalized ~ age, data = df_average_speaker_formants) # Not significant
+
+
+# The above results were not significant (0.7309, and 0.9658 respectively)
+# However, to go beyond a standard analysis, below we are running tests to see if other variables affect formant
+# values. 
+
+# Test 3
 # Testing if place of voicing BEFORE target vowel affects formants regardless of class
 
-t.test(F1_normalized ~ voicing_before, data = df) # p = 2.2e-16
-t.test(F2_normalized ~ voicing_before, data = df) # p = 2.2e-16
+test_3a <- aov(F1_normalized ~ voicing_before, data = df) # p < 2.2e-16
+test_3b <- aov(F2_normalized ~ voicing_before, data = df) # p = 2.2e-16
+
+summary(test_3a)
+summary(test_3b)
 
 # Super significant
 
-# Test 3
+# Test 4
 # Testing if place of voicing AFTER target vowel affects formants regardless of class
 
-t.test(F1_normalized ~ voicing_after, data = df) # p = 0.001795
-t.test(F2_normalized ~ voicing_after, data = df) # p = 2.417e-10
+test_4a <- aov(F1_normalized ~ voicing_after, data = df) # p = 0.048
+test_4b <- aov(F2_normalized ~ voicing_after, data = df) # p = 8.36e-11
+
+summary(test_4a)
+summary(test_4b)
 
 # Super significant - especially on F2
 
 # To start comparing things like how voicing of different class affects F1/F2 we need
 # to start using an ANOVA (Analysis of Variance) test
 
-# Test 4
+# Test 5
 # Testing if class AND voicing of before transript affects F1/F2
 
-test_4a = aov(F1_normalized ~ class * voicing_before, data = df)
-summary(test_4a)
+test_5a = aov(F1_normalized ~ class * voicing_before, data = df)
+summary(test_5a)
 # No significant findings besides the vociing before affecting F1 which we knew already
 # No signficance with class * vocing_before
 
-test_4b = aov(F2_normalized ~ class * voicing_before, data = df)
-summary(test_4b)
+test_5b = aov(F2_normalized ~ class * voicing_before, data = df)
+summary(test_5b)
 # There is a significance where class affects F2 based on voicing_before 
 # this is an interesting finding and i wonder why this is the case
 
-# Test 5
+# Test 6
 # Testing if class AND voicing of after transript affects F1/F2
 
-test_5a = aov(F1_normalized ~ class * voicing_after, data = df)
-summary(test_5a)
+test_6a = aov(F1_normalized ~ class * voicing_after, data = df)
+summary(test_6a)
 
 
-test_5b = aov(F2_normalized ~ class * voicing_after, data = df)
-summary(test_5b)
+test_6b = aov(F2_normalized ~ class * voicing_after, data = df)
+summary(test_6b)
 
 # No significance in either test
 # Class and the voicing of the post FACE vowel sound does not affect the F1/F2 values.
 
-# Test 6
+# Test 7
 # Testing if place of articulation before FACE vowel has an affect (regardless of class)
 
-test_6a = aov(F1_normalized ~ place_before, data = df)
-summary(test_6a)
+test_7a = aov(F1_normalized ~ place_before, data = df)
+summary(test_7a)
 # Super significant, p = 1.82e-15
 
-test_6b = aov(F2_normalized ~ place_before, data = df)
-summary(test_6b)
-# Super significant, p = 2e-16
-
-# Test 7
-# Testing if place of articulation after FACE vowel has afect (regardless of class)
-
-test_7a = aov(F1_normalized ~ place_after, data = df)
-summary(test_7a)
-# Super significant, p = 9.27e-09
-
-test_7b = aov(F2_normalized ~ place_after, data = df)
+test_7b = aov(F2_normalized ~ place_before, data = df)
 summary(test_7b)
 # Super significant, p = 2e-16
 
 # Test 8
-# Testing if place of articulation before FACE vowel AND class has an affect
+# Testing if place of articulation after FACE vowel has afect (regardless of class)
 
-test_8a = aov(F1_normalized ~ place_before * class, data = df)
+test_8a = aov(F1_normalized ~ place_after, data = df)
 summary(test_8a)
-# Not significant: 0.109
+# Super significant, p = 9.27e-09
 
-test_8b = aov(F2_normalized ~ place_before * class, data = df)
+test_8b = aov(F2_normalized ~ place_after, data = df)
 summary(test_8b)
-# Not significant: 0.810  
+# Super significant, p = 2e-16
 
 # Test 9
-# Testing if place of articulation after FACE vowel AND class has an affect 
+# Testing if place of articulation before FACE vowel AND class has an affect
 
-test_9a = aov(F1_normalized ~ place_after * class, data = df)
+test_9a = aov(F1_normalized ~ place_before * class, data = df)
 summary(test_9a)
-# Not significant: 0.56
+# Not significant: 0.109
 
-test_9b = aov(F2_normalized ~ place_after * class, data = df)
+test_9b = aov(F2_normalized ~ place_before * class, data = df)
 summary(test_9b)
-# Not significant 0.812
+# Not significant: 0.810  
 
 # Test 10
-# Linear regression between age and F1/F2 values of FACE
-test_10a = lm(F1_normalized ~ year_of_birth, data = df)
+# Testing if place of articulation after FACE vowel AND class has an affect 
+
+test_10a = aov(F1_normalized ~ place_after * class, data = df)
 summary(test_10a)
+# Not significant: 0.56
+
+test_10b = aov(F2_normalized ~ place_after * class, data = df)
+summary(test_10b)
+# Not significant 0.812
+
+# Test 11
+# Linear regression between age and F1/F2 values of FACE
+test_11a = lm(F1_normalized ~ year_of_birth, data = df)
+summary(test_11a)
 # Not significant p = 0.508
 
-test_10b = lm(F2_normalized ~ year_of_birth, data = df)
-summary(test_10b)
+test_11b = lm(F2_normalized ~ year_of_birth, data = df)
+summary(test_11b)
 # Not significant p = 0.804
 
 # Age on its own does not have an affect on formant values it seems 
 
-# Test 11
+# Test 12
 # Linear regression between age and F1/F2 values of FACE
-test_11a = lm(F1_normalized ~ year_of_birth + class, data = df)
-summary(test_11a)
+test_12a = lm(F1_normalized ~ year_of_birth + class, data = df)
+summary(test_12a)
 # Not significant p = 0.7522
 
-test_11b = lm(F2_normalized ~ year_of_birth + class, data = df)
-summary(test_11b)
+test_12b = lm(F2_normalized ~ year_of_birth + class, data = df)
+summary(test_12b)
 # Not significant p = 0.9686
 
 
@@ -395,10 +439,11 @@ summary(test_11b)
 
 # paper I learned LME from https://cran.r-project.org/package=lme4/vignettes/lmer.pdf
 
-# Test 12
-lmer(F1_normalized ~ class + voicing_after + (1|speaker) + (1|clean_target_transcript), data = df)
+#Test 13
+test_13 <- lmer(F1_normalized ~ class + voicing_after + (1|speaker) + (1|target_transcript), data = df)
+summary(test_13)
 
-# Test 13
+# Test 14
 # Which place of articulation is most significant? 
 # Test 6 and 7 showed that place of articulation was super significant in the F1/F2
 # values for the FACE vowel. This test determines which ones are more significant
@@ -408,7 +453,7 @@ TukeyHSD(test_6b)
 TukeyHSD(test_7a)
 TukeyHSD(test_7b)
 
-# Test 14
+# Test 15
 
 centroids <- df %>%
   group_by(class) %>%
@@ -429,7 +474,7 @@ print(dist_val)
 # is really no discernible difference in F1/F2 values for the FACE vowel based
 # on class. 
 
-# Test 15
+# Test 16
 # Because class seems to really have no affect at all, we will compare the youngest and oldest 
 # people in the data set and see how far apart they are
 
@@ -459,6 +504,16 @@ print(dist_age)
 # ~ 10x class 
 # Age has far more affect than class :)
 
-
-
 # END OF FILE :)
+
+median <- range(df$F2_time_0.2[df$class %in% c("N")], na.rm = TRUE)
+
+
+median(df$F1_time_0.2)
+median(df$F2_time_0.2)
+
+mean(df$F1_time_0.2)
+mean(df$F2_time_0.2)
+
+range(df$F1_time_0.2)
+range(df$F2_time_0.2)
